@@ -769,7 +769,7 @@ static int64_t _addCallbackToBreakpoint(struct mScriptDebugger* debugger, struct
 	return cbid;
 }
 
-static void _runCallbacks(struct mScriptDebugger* debugger, struct mScriptBreakpoint* point) {
+static void _runCallbacks(struct mScriptDebugger* debugger, struct mScriptBreakpoint* point, struct mScriptValue* info) {
 	struct TableIterator iter;
 	if (!HashTableIteratorStart(&point->callbacks, &iter)) {
 		return;
@@ -778,6 +778,7 @@ static void _runCallbacks(struct mScriptDebugger* debugger, struct mScriptBreakp
 		struct mScriptValue* fn = HashTableIteratorGetValue(&point->callbacks, &iter);
 		struct mScriptFrame frame;
 		mScriptFrameInit(&frame);
+		mSCRIPT_PUSH(&frame.stack, WTABLE, info);
 		mScriptContextInvoke(debugger->p->context, fn, &frame);
 		mScriptFrameDeinit(&frame);
 	} while (HashTableIteratorNext(&point->callbacks, &iter));
@@ -826,7 +827,50 @@ static void _scriptDebuggerEntered(struct mDebuggerModule* debugger, enum mDebug
 		return;
 	}
 
-	_runCallbacks(scriptDebugger, point);
+	struct mScriptValue cbInfo = {
+		.refs = mSCRIPT_VALUE_UNREF,
+		.flags = 0,
+		.type = mSCRIPT_TYPE_MS_TABLE,
+	};
+	cbInfo.type->alloc(&cbInfo);
+
+	static struct mScriptValue keyAddress = mSCRIPT_MAKE_CHARP("address");
+	static struct mScriptValue keyWidth = mSCRIPT_MAKE_CHARP("width");
+	static struct mScriptValue keySegment = mSCRIPT_MAKE_CHARP("segment");
+	static struct mScriptValue keyOldValue = mSCRIPT_MAKE_CHARP("oldValue");
+	static struct mScriptValue keyNewValue = mSCRIPT_MAKE_CHARP("newValue");
+	static struct mScriptValue keyAccessType = mSCRIPT_MAKE_CHARP("accessType");
+
+	struct mScriptValue valAddress = mSCRIPT_MAKE_U32(info->address);
+	struct mScriptValue valWidth = mSCRIPT_MAKE_S32(info->width);
+	struct mScriptValue valSegment = mSCRIPT_MAKE_S32(info->segment);
+	struct mScriptValue valOldValue;
+	struct mScriptValue valNewValue;
+	struct mScriptValue valAccessType;
+
+	mScriptTableInsert(&cbInfo, &keyAddress, &valAddress);
+	if (info->width > 0) {
+		mScriptTableInsert(&cbInfo, &keyWidth, &valWidth);
+	}
+	if (info->segment >= 0) {
+		mScriptTableInsert(&cbInfo, &keySegment, &valSegment);
+	}
+
+	if (reason == DEBUGGER_ENTER_WATCHPOINT) {
+		valOldValue = mSCRIPT_MAKE_S32(info->type.wp.oldValue);
+		valNewValue = mSCRIPT_MAKE_S32(info->type.wp.newValue);
+		valAccessType = mSCRIPT_MAKE_S32(info->type.wp.accessType);
+
+		mScriptTableInsert(&cbInfo, &keyOldValue, &valOldValue);
+		if (info->type.wp.accessType != WATCHPOINT_READ) {
+			mScriptTableInsert(&cbInfo, &keyNewValue, &valNewValue);
+		}
+		mScriptTableInsert(&cbInfo, &keyAccessType, &valAccessType);
+	}
+
+	_runCallbacks(scriptDebugger, point, &cbInfo);
+
+	cbInfo.type->free(&cbInfo);
 	debugger->isPaused = false;
 }
 
