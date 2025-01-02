@@ -350,6 +350,9 @@ static struct mScriptValue* _mScriptCoreChecksum(const struct mCore* core, int t
 	case mCHECKSUM_CRC32:
 		size = 4;
 		break;
+	case mCHECKSUM_MD5:
+		size = 16;
+		break;
 	}
 	if (!size) {
 		return &mScriptValueNull;
@@ -834,12 +837,12 @@ static void _scriptDebuggerEntered(struct mDebuggerModule* debugger, enum mDebug
 	};
 	cbInfo.type->alloc(&cbInfo);
 
-	static struct mScriptValue keyAddress = mSCRIPT_MAKE_CHARP("address");
-	static struct mScriptValue keyWidth = mSCRIPT_MAKE_CHARP("width");
-	static struct mScriptValue keySegment = mSCRIPT_MAKE_CHARP("segment");
-	static struct mScriptValue keyOldValue = mSCRIPT_MAKE_CHARP("oldValue");
-	static struct mScriptValue keyNewValue = mSCRIPT_MAKE_CHARP("newValue");
-	static struct mScriptValue keyAccessType = mSCRIPT_MAKE_CHARP("accessType");
+	static struct mScriptValue keyAddress = mSCRIPT_CHARP("address");
+	static struct mScriptValue keyWidth = mSCRIPT_CHARP("width");
+	static struct mScriptValue keySegment = mSCRIPT_CHARP("segment");
+	static struct mScriptValue keyOldValue = mSCRIPT_CHARP("oldValue");
+	static struct mScriptValue keyNewValue = mSCRIPT_CHARP("newValue");
+	static struct mScriptValue keyAccessType = mSCRIPT_CHARP("accessType");
 
 	struct mScriptValue valAddress = mSCRIPT_MAKE_U32(info->address);
 	struct mScriptValue valWidth = mSCRIPT_MAKE_S32(info->width);
@@ -1340,6 +1343,24 @@ static uint8_t _readLuminance(struct GBALuminanceSource* luminance) {
 }
 #endif
 
+#define CALLBACK(NAME) _mScriptCoreCallback ## NAME
+#define DEFINE_CALLBACK(NAME) \
+	void CALLBACK(NAME) (void* context) { \
+		struct mScriptContext* scriptContext = context; \
+		if (!scriptContext) { \
+			return; \
+		} \
+		mScriptContextTriggerCallback(scriptContext, #NAME, NULL); \
+	}
+
+DEFINE_CALLBACK(frame)
+DEFINE_CALLBACK(crashed)
+DEFINE_CALLBACK(sleep)
+DEFINE_CALLBACK(stop)
+DEFINE_CALLBACK(keysRead)
+DEFINE_CALLBACK(savedataUpdated)
+DEFINE_CALLBACK(alarm)
+
 void mScriptContextAttachCore(struct mScriptContext* context, struct mCore* core) {
 	struct mScriptValue* coreValue = mScriptValueAlloc(mSCRIPT_TYPE_MS_S(mScriptCoreAdapter));
 	struct mScriptCoreAdapter* adapter = calloc(1, sizeof(*adapter));
@@ -1371,6 +1392,18 @@ void mScriptContextAttachCore(struct mScriptContext* context, struct mCore* core
 		core->setPeripheral(core, mPERIPH_GBA_LUMINANCE, &adapter->luminance);
 	}
 #endif
+
+	struct mCoreCallbacks callbacks = {
+		.videoFrameEnded = CALLBACK(frame),
+		.coreCrashed = CALLBACK(crashed),
+		.sleep = CALLBACK(sleep),
+		.shutdown = CALLBACK(stop),
+		.keysRead = CALLBACK(keysRead),
+		.savedataUpdated = CALLBACK(savedataUpdated),
+		.alarm = CALLBACK(alarm),
+		.context = context
+	};
+	core->addCoreCallbacks(core, &callbacks);
 
 	_rebuildMemoryMap(context, adapter);
 
